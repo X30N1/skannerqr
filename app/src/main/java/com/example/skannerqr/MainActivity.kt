@@ -18,11 +18,19 @@ import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.*
 import com.example.skannerqr.ui.theme.SkannerqrTheme
 
-data class Product(val id: String, val name: String, val status: String)
+data class Product(
+    val id: Long,
+    val qrCode: String,
+    val productName: String,
+    val description: String?,
+    val price: Double,
+    val itemsInStock: Int,
+    val itemsOrdered: Int
+)
 
 interface ApiService {
-    @GET("api/products/{id}")
-    suspend fun getProduct(@Path("id") id: String): Product?
+    @GET("api/products/qr/{qrCode}")
+    suspend fun getProductByQrCode(@Path("qrCode") qrCode: String): Product?
 
     @POST("api/products")
     suspend fun addProduct(@Body product: Product): Product
@@ -105,20 +113,16 @@ class MainActivity : ComponentActivity() {
             super.onActivityResult(requestCode, resultCode, data)
         }
     }
-
-    private fun handleScannedCode(scannedId: String) {
-        setContent {
-            var scannedData by remember { mutableStateOf(scannedId) }
-            var productInfo by remember { mutableStateOf<Product?>(null) }
-
-            SkannerqrTheme {
-                coroutineScope.launch {
-                    try {
-                        productInfo = api.getProduct(scannedId)
-                    } catch (e: Exception) {
-                        Toast.makeText(this@MainActivity, "Network error", Toast.LENGTH_SHORT).show()
-                    }
-                }
+    
+    private fun handleScannedCode(scannedQrCode: String) {
+        coroutineScope.launch {
+            try {
+                productInfo = api.getProductByQrCode(scannedQrCode)
+            } catch (e: Exception) {
+                Toast.makeText(this@MainActivity, "Network error", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
                 Column(
                     modifier = Modifier
