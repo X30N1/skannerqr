@@ -17,15 +17,16 @@ import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.*
 import com.example.skannerqr.ui.theme.SkannerqrTheme
+import java.math.BigDecimal
 
 data class Product(
-    val id: Long,
+    val id: Long? = null,
     val qrCode: String,
     val productName: String,
-    val description: String?,
-    val price: Double,
-    val itemsInStock: Int,
-    val itemsOrdered: Int
+    val description: String? = null,
+    val price: BigDecimal,
+    val itemsInStock: Int = 0,
+    val itemsOrdered: Int = 0
 )
 
 interface ApiService {
@@ -40,7 +41,7 @@ class MainActivity : ComponentActivity() {
 
     private val api by lazy {
         Retrofit.Builder()
-            .baseUrl("http://192.168.1.192:8080/") // <-- Adjust as needed
+            .baseUrl("http://192.168.1.192:8080/") // <-- IP do serwisu springboot
             .addConverterFactory(GsonConverterFactory.create())
             .build()
             .create(ApiService::class.java)
@@ -55,6 +56,21 @@ class MainActivity : ComponentActivity() {
             SkannerqrTheme {
                 var scannedData by remember { mutableStateOf<String?>(null) }
                 var productInfo by remember { mutableStateOf<Product?>(null) }
+                var isLoading by remember { mutableStateOf(false) }
+
+                LaunchedEffect(scannedData) {
+                    scannedData?.let { qrCode ->
+                        isLoading = true
+                        try {
+                            productInfo = api.getProductByQrCode(qrCode)
+                        } catch (e: Exception) {
+                            Toast.makeText(this@MainActivity, "Blad sieci: ${e.message}", Toast.LENGTH_SHORT).show()
+                            productInfo = null
+                        } finally {
+                            isLoading = false
+                        }
+                    }
+                }
 
                 Column(
                     modifier = Modifier
@@ -63,24 +79,81 @@ class MainActivity : ComponentActivity() {
                     verticalArrangement = Arrangement.Center,
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Button(onClick = { startScan() }) {
-                        Text("Scan QR Code")
+                    Button(
+                        onClick = { startScan() },
+                        enabled = !isLoading
+                    ) {
+                        Text("Skanuj kod QR")
                     }
 
                     Spacer(modifier = Modifier.height(20.dp))
 
-                    scannedData?.let {
-                        Text("Scanned: $it")
+                    if (isLoading) {
+                        CircularProgressIndicator()
+                    }
+
+                    scannedData?.let { qrCode ->
+                        Text("Zeskanowano produkt: $qrCode")
+                        
+                        Spacer(modifier = Modifier.height(10.dp))
+                        
                         productInfo?.let { product ->
-                            Text("Product Found: ${product.name} - ${product.status}")
-                        } ?: run {
-                            Button(onClick = {
-                                coroutineScope.launch {
-                                    val newProduct = Product(it, "New Product", "IN_STOCK")
-                                    productInfo = api.addProduct(newProduct)
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp)
+                                ) {
+                                    Text(
+                                        text = "Znaleziono produkt:",
+                                        style = MaterialTheme.typography.titleMedium
+                                    )
+                                    Text("Nazwa: ${product.productName}")
+                                    Text("Cena: $${product.price}")
+                                    Text("Posiadane: ${product.itemsInStock}")
+                                    Text("Zamowione: ${product.itemsOrdered}")
+                                    product.description?.let { desc ->
+                                        Text("Opis: $desc")
+                                    }
                                 }
-                            }) {
-                                Text("Add Product")
+                            }
+                        } ?: run {
+                            if (!isLoading) {
+                                Text("Nie znaleziono produktu")
+                                
+                                Spacer(modifier = Modifier.height(10.dp))
+                                
+                                Button(
+                                    onClick = {
+                                        coroutineScope.launch {
+                                            try {
+                                                val newProduct = Product(
+                                                    qrCode = qrCode,
+                                                    productName = "Nowy produkt - $qrCode",
+                                                    description = "Stworzono produkt",
+                                                    price = BigDecimal("0.00"),
+                                                    itemsInStock = 0,
+                                                    itemsOrdered = 0
+                                                )
+                                                productInfo = api.addProduct(newProduct)
+                                                Toast.makeText(
+                                                    this@MainActivity,
+                                                    "Pomyslnie stworzono produkt!",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            } catch (e: Exception) {
+                                                Toast.makeText(
+                                                    this@MainActivity,
+                                                    "Bład przy tworzeniu produktu: ${e.message}",
+                                                    Toast.LENGTH_LONG
+                                                ).show()
+                                            }
+                                        }
+                                    }
+                                ) {
+                                    Text("Dodaj nowy produkt")
+                                }
                             }
                         }
                     }
@@ -88,7 +161,7 @@ class MainActivity : ComponentActivity() {
                     Spacer(modifier = Modifier.height(40.dp))
 
                     Button(onClick = { finish() }) {
-                        Text("Exit App")
+                        Text("Wyjdz z aplikacji")
                     }
                 }
             }
@@ -98,31 +171,41 @@ class MainActivity : ComponentActivity() {
     private fun startScan() {
         val integrator = IntentIntegrator(this)
         integrator.setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
-        integrator.setPrompt("Scan QR Code")
+        integrator.setPrompt("Zeskanuj kod qr")
         integrator.setBeepEnabled(true)
         integrator.setOrientationLocked(false)
         integrator.initiateScan()
     }
 
+    @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         val result = IntentIntegrator.parseActivityResult(requestCode, resultCode, data)
         if (result != null && result.contents != null) {
-            val scannedId = result.contents
-            handleScannedCode(scannedId)
+            val scannedQrCode = result.contents
+            handleScannedCode(scannedQrCode)
         } else {
             super.onActivityResult(requestCode, resultCode, data)
         }
     }
-    
+
     private fun handleScannedCode(scannedQrCode: String) {
-        coroutineScope.launch {
-            try {
-                productInfo = api.getProductByQrCode(scannedQrCode)
-            } catch (e: Exception) {
-                Toast.makeText(this@MainActivity, "Network error", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
+        setContent {
+            SkannerqrTheme {
+                var scannedData by remember { mutableStateOf(scannedQrCode) }
+                var productInfo by remember { mutableStateOf<Product?>(null) }
+                var isLoading by remember { mutableStateOf(false) }
+
+                // Trigger API call when component is created
+                LaunchedEffect(Unit) {
+                    isLoading = true
+                    try {
+                        productInfo = api.getProductByQrCode(scannedQrCode)
+                    } catch (e: Exception) {
+                        Toast.makeText(this@MainActivity, "Blad sieci: ${e.message}", Toast.LENGTH_SHORT).show()
+                    } finally {
+                        isLoading = false
+                    }
+                }
 
                 Column(
                     modifier = Modifier
@@ -131,12 +214,54 @@ class MainActivity : ComponentActivity() {
                     verticalArrangement = Arrangement.Center,
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Text("Scanned: $scannedId")
-                    productInfo?.let {
-                        Text("Product: ${it.name}, Status: ${it.status}")
-                    } ?: Text("Product not found.")
+                    Text("Zeskanowano kod QR: $scannedQrCode")
+                    
+                    Spacer(modifier = Modifier.height(20.dp))
+                    
+                    if (isLoading) {
+                        CircularProgressIndicator()
+                    } else {
+                        productInfo?.let { product ->
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp)
+                                ) {
+                                    Text(
+                                        text = "Informacje o produkcie:",
+                                        style = MaterialTheme.typography.titleMedium
+                                    )
+                                    Text("Nazwa: ${product.productName}")
+                                    Text("cena: $${product.price}")
+                                    Text("Posiadane: ${product.itemsInStock}")
+                                    Text("Zamowione: ${product.itemsOrdered}")
+                                    product.description?.let { desc ->
+                                        Text("Opis: $desc")
+                                    }
+                                }
+                            }
+                        } ?: run {
+                            Text("Nie znaleziono produktu")
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(20.dp))
+                    
+                    Button(onClick = { 
+                        // Reset to main screen
+                        onCreate(null)
+                    }) {
+                        Text("Zeskanuj kolejne")
+                    }
                 }
             }
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        coroutineScope.cancel()
     }
 }
